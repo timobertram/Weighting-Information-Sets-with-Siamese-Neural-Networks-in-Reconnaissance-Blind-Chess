@@ -19,3 +19,18 @@ If you want to retrain the Siamese network, follow these steps:
 1. Download RBC game data from https://rbc.jhuapl.edu/about and put the .json files in a folder "data/games/"
 2. Run create_data.py. This will run a multiprocessed script that converts the game files into training data for the network and create a folder "data/siamese/" which contains three folders; finished_files, train, and val. finished_files is used in case you need to restart create_data.py and tracks which .json files were already processed, you can delete this folder afterwards. train and val each contain two subfolders, move and sense, which split the training data into the two decision-points of each turn. This process can take a while!
 3. Run training.py
+
+# Citation
+
+If you are using our code or our paper, please cite us: 
+#### MLA
+Bertram, Timo, Johannes Fürnkranz, and Martin Müller. "Weighting Information Sets with Siamese Neural Networks in Reconnaissance Blind Chess" 2023 IEEE Conference on Games (CoG). IEEE, 2023.
+#### BibTeX
+@inproceedings{bertram2023weighting,
+  title={Weighting Information Sets with Siamese Neural Networks in Reconnaissance Blind Chess},
+  author={Bertram, Timo and F{\"u}rnkranz, Johannes and M{\"u}ller, Martin},
+  booktitle={2023 IEEE Conference on Games (CoG)},
+  pages={1--8},
+  year={2023},
+  organization={IEEE}
+}
