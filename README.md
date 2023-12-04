@@ -1,7 +1,7 @@
-# Weighting-Information-Sets-with-Siamese-Neural-Networks-in-Reconnaissance-Blind-Chess
-This codebase was used for the paper "Weighting-Information-Sets-with-Siamese-Neural-Networks-in-Reconnaissance-Blind-Chess" which was accepted for the IEEE Conference on Games 2023 and provides the code required for training your own Siamese neural network for Reconnaissance Blind Chess (RBC) from scratch, as well as a trained network that you can use in your own RBC agent.
+# Neural-Network-based-Information-Set-Weighting-for-Playing-Reconnaissance-Blind-Chess
+This codebase was used for the paper "Neural-Network-based-Information-Set-Weighting-for-Playing-Reconnaissance-Blind-Chess", which is in review for IEEE Transactions on Games 2023, and provides the code required for training your own Siamese neural network for Reconnaissance Blind Chess (RBC) from scratch, as well as a trained network that you can use in your own RBC agent.
 
-This repository is seperated into two parts: the code that was used to train a Siamese neural network on RBC game data, as well as the RBC agent used for evaluation of the final network.
+This repository is seperated into two parts: the code that was used to train a Siamese neural network on RBC game data, as well as the RBC agent used for evaluation of the final network. As this is in extension of our previous paper "Weighting-Information-Sets-with-Siamese-Neural-Networks-in-Reconnaissance-Blind-Chess" that was accepted at IEEE Conference on Games 2023, a lot of the code overlaps with our repository at https://github.com/timobertram/Weighting-Information-Sets-with-Siamese-Neural-Networks-in-Reconnaissance-Blind-Chess.
 
 # Usage for playing RBC
 
@@ -20,17 +20,3 @@ If you want to retrain the Siamese network, follow these steps:
 2. Run create_data.py. This will run a multiprocessed script that converts the game files into training data for the network and create a folder "data/siamese/" which contains three folders; finished_files, train, and val. finished_files is used in case you need to restart create_data.py and tracks which .json files were already processed, you can delete this folder afterwards. train and val each contain two subfolders, move and sense, which split the training data into the two decision-points of each turn. This process can take a while!
 3. Run training.py
 
-# Citation
-
-If you are using our code or our paper, please cite us: 
-#### MLA
-Bertram, Timo, Johannes Fürnkranz, and Martin Müller. "Weighting Information Sets with Siamese Neural Networks in Reconnaissance Blind Chess" 2023 IEEE Conference on Games (CoG). IEEE, 2023.
-#### BibTeX
-@inproceedings{bertram2023weighting,
-  title={Weighting Information Sets with Siamese Neural Networks in Reconnaissance Blind Chess},
-  author={Bertram, Timo and F{\"u}rnkranz, Johannes and M{\"u}ller, Martin},
-  booktitle={2023 IEEE Conference on Games (CoG)},
-  pages={1--8},
-  year={2023},
-  organization={IEEE}
-}

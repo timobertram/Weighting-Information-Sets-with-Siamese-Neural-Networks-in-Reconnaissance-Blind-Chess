@@ -392,8 +392,228 @@ class Siamese_Network(nn.Module):
         self.writer.add_scalar('epoch_eval_loss',epoch_loss,epoch)
         self.eval_losses.clear()
         return np.mean(epoch_loss)
+class Probability_Network(nn.Module):
+    def __init__(self, pre_embed_dim = 128, path = None, create_writer = False, device = 'cuda'):
+        super(Probability_Network,self).__init__()
+        num_players,self.player_encoding,self.empty_encoding = Siamese_RBC_dataset.create_player_encoding('game_numbers.csv')
+        self.reverse_encoding = {torch.argmax(v,dim=0)[0,0].item():k for k,v in self.player_encoding.items()}
+        self.train_pick_choices = []
+        self.visualize = False
 
+        self.main_block_size = 128
+
+        self.loss_fn = nn.BCEWithLogitsLoss()
+        self.train_pick_accuracy = []
+        self.pick_accuracy = []
+        self.pick_choices = []
+        self.train_losses = []
+        self.eval_losses = []
+        self.test_losses = []
+        self.pick_distance = []
+        self.train_pick_distance = []
+        self.choice_num_to_accuracy = defaultdict(list)
+        self.top_k_accuracy = defaultdict(list)
+        self.player_to_accuracy = defaultdict(lambda: defaultdict(list))
+        self.device = device
+        self.writer = SummaryWriter()
+
+
+        self.input = Embedding_Network_Convolution(input_layers = 1850+12,output_size = pre_embed_dim, num_layers = 5, layer_size = 64)
+        self.first_block = Siamese_Block_Convolution(pre_embed_dim,self.main_block_size)
+        self.main_network = nn.ModuleList()
+        for _ in range(10):
+            self.main_network.append(Siamese_Block_Convolution(self.main_block_size,self.main_block_size))
+        self.last_block = nn.Sequential(
+            nn.Conv2d(self.main_block_size,64, kernel_size=1, padding = 'same'),
+            nn.InstanceNorm2d(64),
+            nn.ELU(),
+            nn.Conv2d(64,1, kernel_size=1, padding = 'same'),
+            nn.InstanceNorm2d(1),
+            nn.ELU()
+        )
+        self.output = nn.Linear(8*8*1,1)
+        if path is not None:
+            self.load_state_dict(torch.load(path, map_location = self.device))
+            self.eval()
+        self = self.to(self.device)
+
+    def get_distances_of_options(self,full_anchor,options):
+        self.eval()
+        anchor,player,padding = full_anchor
+        B,num_options,_,_,_ = options.shape
+        with torch.no_grad():
+            anchor = torch.cat((anchor.to(self.device),player.to(self.device)), dim = 0)
+            anchor = anchor.repeat_interleave(num_options, dim = 0)
+            inputs = torch.cat((anchor,options), dim = 0)
+            out = self.forward(inputs)
+        self.train()
+        return distances
+    
+    def forward(self,anchor,board,player):
+        input = torch.cat((anchor.to(self.device),player.to(self.device), board.to(self.device)), dim = 1)
+        input = self.input(input)
+        input = self.first_block(input)
+        for block in self.main_network:
+            input = input + block(input)
+        output = self.last_block(input)
+        output = output.view(-1,8*8)
+        output = self.output(output)
+        return output
+    
+    def training_step(self,batch,batch_idx):
+        anchor,positive,negative,player = batch
+        anchor = anchor.view(-1,1800,8,8)
+        targets = torch.cat((torch.ones(anchor.size(0)),torch.zeros(anchor.size(0))),dim = 0).to(self.device)
+        anchor = anchor.repeat(2,1,1,1)
+        choices = torch.cat((positive,negative),dim = 0)
+        player = player.repeat(2,1,1,1)
+
+        self.optimizer.zero_grad()
+        out = self(anchor,choices,player).squeeze()
+        loss = self.loss_fn(out, targets)
+        loss = torch.mean(loss)
+        loss.backward()
+        self.optimizer.step()
+        return loss
+
+    def validation_step(self,batch,batch_idx):
+        anchor,positive,negative,player = batch
+        anchor = anchor.view(-1,1800,8,8)
+        targets = torch.cat((torch.ones(anchor.size(0)),torch.zeros(anchor.size(0))),dim = 0).to(self.device)
+        anchor = anchor.repeat(2,1,1,1)
+        choices = torch.cat((positive,negative),dim = 0)
+        player = player.repeat(2,1,1,1)
+
+        with torch.no_grad():
+            out = self(anchor,choices,player).squeeze()
+            loss = self.loss_fn(out, targets)
+            loss = torch.mean(loss)
+        return loss
+
+    def test_step(self,batch,batch_idx, top_k = (1,), top_k_percentage = None):
+        anchor,positive,negative,player,lens = batch
+        anchor = anchor.to(self.device)
+        positive = positive.to(self.device)
+        negative = negative.to(self.device)
+        player = player.to(self.device)
+        maximum_length = torch.max(lens).item()+1
+
+        choice_list = torch.cat((positive.unsqueeze(dim=0),negative),dim = 1)
+
+        random_indizes = list(range(int(maximum_length)))
+        shuffle(random_indizes)
+        try:
+            correct_choice = np.argmin(random_indizes)
+        except Exception as e:
+            raise e
+        choice_list = choice_list.view(maximum_length,12,8,8)[random_indizes,:,:,:]
+        batch_size = anchor.size(0)
+
+    
+        anchor = anchor.repeat_interleave(maximum_length, dim = 0)
+        player = player.repeat_interleave(maximum_length, dim = 0)
+        anchor = anchor.view(maximum_length,1800,8,8)
+        distances = torch.sigmoid(self.forward(anchor, choice_list, player))
+
+        for i in range(batch_size):
+            if lens[i] < maximum_length:
+                distances[i,lens[i]:] = float('-inf')
+        distances = distances.view(batch_size,maximum_length)
+        picks = torch.argmax(distances,dim=1)
+        pick_distances = torch.argsort(distances,descending = True,dim= 1)
+        index_of_correct_choice = (pick_distances == correct_choice).nonzero(as_tuple=True)[1]
+        self.pick_distance.extend(list(index_of_correct_choice.cpu().numpy()))
+        self.pick_accuracy.extend([1 if pick == correct_choice else 0 for pick in picks])
+        player = player[0,:,:,:].unsqueeze(dim=0)
+        for i in range(picks.shape[0]):
+            for k in top_k:
+                if index_of_correct_choice[i] < k:
+                    self.top_k_accuracy[k].append(1)
+                else:
+                    self.top_k_accuracy[k].append(0)
+            
+            for k in top_k_percentage:
+                if index_of_correct_choice[i] <= math.ceil(lens[i].item()*k):
+                    self.top_k_accuracy[k].append(1)
+                else:
+                    self.top_k_accuracy[k].append(0)
+            if picks[i].item() == correct_choice:
+                self.choice_num_to_accuracy[lens[i].item()].append(1)
+                if torch.sum(player).item() == 64:
+                    p = self.player_to_accuracy[torch.argmax(player,dim = 1)[0,0,0].item()]
+
+                    p[lens[i].item()].append(1)
+                else:
+                    p = self.player_to_accuracy[50]
+                    p[lens[i].item()].append(1)
+
+            else:
+                self.choice_num_to_accuracy[lens[i].item()].append(0)
+                if torch.sum(player).item() == 64:
+                    p = self.player_to_accuracy[torch.argmax(player,dim = 1)[0,0,0].item()]
+                    p[lens[i].item()].append(0)
+                else:
+                    p = self.player_to_accuracy[50]
+                    p[lens[i].item()].append(0)
+        self.train_pick_choices.extend([lens[i].item() for i in range(lens.size(0))])
+        return distances
+            
+
+    def training_epoch_end(self, epoch):
+        train_loss = np.mean(self.train_losses)
+        self.writer.add_scalar('epoch_train_loss',train_loss,epoch)
+        self.train_losses.clear()
+        return np.mean(train_loss)
+
+    def test_epoch_end(self, outs = None):
+        accuracy = np.mean(self.pick_accuracy)
+        self.pick_accuracy.clear()
+
+        top_k_accuracy = {k:np.mean(v) for k,v in self.top_k_accuracy.items()}
+        self.top_k_accuracy.clear()
+        distance = np.mean(self.pick_distance)
+        with open('siamese_pick_distance.txt', 'w') as f:
+            for d in self.pick_distance:
+                f.write(f'{d}\n')
+        self.pick_distance.clear()
+
+        test_choices = np.mean(self.train_pick_choices)
+        self.train_pick_choices.clear()
+
+        player_to_num_accuracy = self.player_to_accuracy.items()
+        sorted_dict = {}
+        for player,acc_dict in player_to_num_accuracy:
+            num_tuples = acc_dict.items()
+            num_tuples = sorted(num_tuples, key = lambda x: np.mean(x[1]))
+            all_results = []
+            for tup in num_tuples:
+                all_results.extend(tup[1])
+            total_acc = np.mean(all_results)
+            num_tuples = [(tup[0],np.mean(tup[1]),len(tup[1])) for tup in num_tuples]
+            num_tuples.append(f'Total accuracy = {total_acc}')
+            if player == 50:
+                sorted_dict['No player'] = num_tuples
+            else:
+                sorted_dict[self.reverse_encoding[player]] = num_tuples
+            
+        self.player_to_accuracy = defaultdict(lambda: defaultdict(list))
+        self.epoch_accuracy = accuracy
+
+
+        print(f'Pick accuracy: {self.epoch_accuracy}')
+        print(f'Top k accuracy: {top_k_accuracy}')
+        print(f'Pick distance: {distance}')
+        print(f'Pick choices: {test_choices}')
+        print(f'Accuracy by player and choice number:')
+        for k,v in sorted_dict.items():
+            print(f'{k}:{v}')
+
+
+    def validation_epoch_end(self, epoch):
+        epoch_loss =np.mean(self.eval_losses)
+        self.writer.add_scalar('epoch_eval_loss',epoch_loss,epoch)
+        self.eval_losses.clear()
+        return np.mean(epoch_loss)
 
 def get_distance(positive,negative):
     return torch.sum(torch.pow(positive-negative,2),dim=1)
-    

@@ -174,7 +174,7 @@ def training_loop(network):
 if __name__ == '__main__':
     torch.backends.cudnn.benchmark = True
     batch_size = 1024
-    num_workers = os.cpu_count()
+    num_workers = 8
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 

@@ -15,27 +15,27 @@ STOCKFISH_ENV_VAR = 'STOCKFISH_EXECUTABLE'
 #change this to your stockfish path
 path_to_stockfish = 'path/to/stockfish'
 
-class SiameseOptimist(Player):
+class SiameseAgent(Player):
     def __init__(self):
         self.board_dict = BoardDict()
         self.color = None
         self.first_turn = True
+        self.temperature = 10
+
+        #change this to your stockfish path
+        stockfish_path = "stockfish/src/stockfish"
+        stockfish_path = 'C:/stockfish/stockfish-windows-x86-64-avx2.exe'
+        try:
+            self.engine = chess.engine.SimpleEngine.popen_uci(stockfish_path, setpgrp=True, timeout = 120)
+        except:
+            raise Exception('Could not open stockfish')
 
 
-        #add stockfish path to environment variable
-        if STOCKFISH_ENV_VAR not in os.environ:
-            os.environ['STOCKFISH_EXECUTABLE'] = path_to_stockfish
-        # make sure there is actually a file
-        stockfish_path = os.environ[STOCKFISH_ENV_VAR]
-        if not os.path.exists(stockfish_path):
-            raise ValueError('No stockfish executable found at "{}"'.format(stockfish_path))
-        # initialize the stockfish engine
-        self.engine = chess.engine.SimpleEngine.popen_uci(stockfish_path, setpgrp=True)
         if torch.cuda.is_available():
             self.device = 'cuda'
         else:
             self.device = 'cpu'
-        self.siamese = SiameseAgent(device = self.device, load_network = True)
+        self.siamese = SiameseBackend(device = self.device, load_network = True, temperature = self.temperature)
 
     def handle_game_start(self, color: Color, board: chess.Board, opponent_name: str):
         self.board_dict.add_board(board)
@@ -191,7 +191,7 @@ class SiameseOptimist(Player):
             print('Not possible boards, this should not happen')
      
 
-    def get_best_move_of_board(self,board,limit):
+    def get_best_move_of_board(self,board,limit = chess.engine.Limit(time=0.1)):
         enemy_king_square = board.king(not self.color)
         # if there are any ally pieces that can take king, execute one of those moves
         enemy_king_attackers = board.attackers(self.color, enemy_king_square)
@@ -207,13 +207,41 @@ class SiameseOptimist(Player):
                 move = chess.Move.null()
         return move
 
+    
+    def average_evaluation_move(self,move_actions: List[chess.Move], seconds_left: float) -> Optional[chess.Move]:
+        ranking = self.reduce_boards(50)
+        move_ratings = defaultdict(list)
+        moves = [self.get_best_move_of_board(board) for board,_ in ranking]
+        for move in moves:
+            for board,weight in ranking:
+                tmp_board = copy.deepcopy(board)
+                if not tmp_board.is_legal(move):
+                    tmp_board.push(chess.Move.null())
+                    tmp_board.clear_stack()
+                else:
+                    tmp_board.push(move)
+                move_ratings[move].append(self.eval_of_move(move, board)*weight)
+        best_move = max(move_ratings,key = lambda k:sum(move_ratings[k]))
+        print(f'Best move is {best_move} with an eval of {sum(move_ratings[best_move])}')
+        return max(move_ratings,key = lambda k:sum(move_ratings[k]))
+
+    def eval_of_move(self, move, board):
+        tmp_board = copy.deepcopy(board)
+        turn = tmp_board.turn
+        if board.attackers(turn, board.king(not turn)):
+            return 1    
+        if board.attackers(not turn, board.king(turn)):
+            if not board.is_legal(move):
+                return 0
+        if not tmp_board.is_legal(move):
+            tmp_board.turn = not tmp_board.turn
+        else:
+            tmp_board.push(move) 
+        return 1-stockfish_eval(board = tmp_board, engine = self.engine) 
+
     def choose_move(self, move_actions: List[chess.Move], seconds_left: float) -> Optional[chess.Move]:
         print(f'{seconds_left} seconds left against {self.opponent_name}')
-        ranking = self.reduce_boards(50)
-        most_likely_board = ranking[0][0]
-        print(f'Most likely board for turn {self.get_turn_number()}: {most_likely_board.fen()} \n {most_likely_board}')
-
-        return self.get_best_move_of_board(most_likely_board,chess.engine.Limit(time=3))
+        return self.average_evaluation_move(move_actions,seconds_left)
     
 
     def reduce_boards(self,max_num,delete = False, get_weighting = True):

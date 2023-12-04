@@ -23,9 +23,9 @@ pos_sense_result = 83
 piece_map = {'p': (0,0),'r': (0,1),'n': (0,2),'b': (0,3),'q': (0,4),'k': (0,5),'P': (1,0),
     'R': (1,1),'N': (1,2),'B': (1,3),'Q': (1,4),'K': (1,5)}
 
-class SiameseAgent():
+class SiameseBackend():
 
-    def __init__(self, device = None, player_embedding = False, load_network = True):
+    def __init__(self, device = None, player_embedding = False, load_network = True, temperature = 10):
         self.network = Siamese_Network(embedding_dimensions = 512)
         self.player_embedding = player_embedding
         if not device:
@@ -33,7 +33,7 @@ class SiameseAgent():
         else:
             self.device = device
         if load_network:
-            path = 'Siamese_Network_New.pt'
+            path = 'Siamese_Network.pt'
             try:
                 self.network.load_state_dict(torch.load(path, map_location = self.device))
             except Exception as e:
@@ -45,6 +45,7 @@ class SiameseAgent():
         self.current_board = torch.zeros(90,8,8)
         self.last_sense = None
         self.own_pieces = None
+        self.temperature = temperature
         self.color = None
 
 
@@ -154,9 +155,13 @@ class SiameseAgent():
 
     def distances_to_weights(self,distances):
         if torch.min(distances) == torch.max(distances) or distances.size(0) == 1:
-            return torch.ones_like(distances)
+            weights = torch.ones_like(distances)
+            weights = weights/weights.size(0)
+            return weights.tolist()
         distances += 1e-7
-        distances = torch.ones_like(distances)- ((distances-torch.min(distances))/(torch.max(distances)-torch.min(distances)))
+        softmin = torch.nn.Softmin(dim = 0)
+        distances = distances/self.temperature
+        distances = softmin(distances)
         distances = distances.tolist()
         return distances
 
